@@ -281,52 +281,6 @@ impl Backend {
                     let response =  batch_to_dataframe(&batches)?;
 
                     return Ok(QueryResponse::ResultSet(status, Arc::new(response)))
-                },
-                crate::compile::QueryPlan::CubeSelect(status, plan) => {
-                    debug!("Request {}", json!(plan.request).to_string());
-                    debug!("Meta {:?}", plan.meta);
-
-                    let response = self.server.transport
-                        .load(plan.request, self.auth_context()?)
-                        .await?;
-
-                    let mut columns: Vec<dataframe::Column> = vec![];
-
-                    for column_meta in &plan.meta {
-                        columns.push(dataframe::Column::new(
-                            column_meta.column_to.clone(),
-                            column_meta.column_type,
-                            ColumnFlags::empty(),
-                        ));
-                    }
-
-                    let mut rows: Vec<dataframe::Row> = vec![];
-
-                    if let Some(result) = response.results.first() {
-                        debug!("Columns {:?}", columns);
-                        debug!("Hydration mapping {:?}", plan.meta);
-                        trace!("Response from Cube.js {:?}", result.data);
-
-                        for row in result.data.iter() {
-                            if let Some(record) = row.as_object() {
-                                rows.push(
-                                    dataframe::Row::hydrate_from_response(&plan.meta, record)
-                                );
-                            } else {
-                                error!(
-                                    "Unable to map row to DataFrame::Row: {:?}, skipping row",
-                                    row
-                                );
-                            }
-                        }
-
-                        return Ok(QueryResponse::ResultSet(status, Arc::new(dataframe::DataFrame::new(
-                            columns,
-                            rows
-                        ))));
-                    } else {
-                        return Ok(QueryResponse::ResultSet(status, Arc::new(dataframe::DataFrame::new(vec![], vec![]))));
-                    }
                 }
             }
         }
