@@ -3,11 +3,13 @@ use std::{any::Any, fmt, sync::Arc};
 use async_trait::async_trait;
 use cubeclient::models::V1LoadRequestQuery;
 use datafusion::{
-    arrow::datatypes::SchemaRef,
+    arrow::datatypes::{Schema, SchemaRef},
     error::Result,
+    execution::context::ExecutionContextState,
     logical_plan::{DFSchemaRef, Expr, LogicalPlan, UserDefinedLogicalNode},
     physical_plan::{
-        DisplayFormatType, ExecutionPlan, Partitioning, SendableRecordBatchStream, Statistics,
+        planner::ExtensionPlanner, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalPlanner,
+        SendableRecordBatchStream, Statistics,
     },
 };
 
@@ -49,7 +51,43 @@ impl UserDefinedLogicalNode for CubeScanNode {
         exprs: &[datafusion::logical_plan::Expr],
         inputs: &[datafusion::logical_plan::LogicalPlan],
     ) -> std::sync::Arc<dyn UserDefinedLogicalNode + Send + Sync> {
-        unimplemented!("CubeScan")
+        assert_eq!(inputs.len(), 0, "input size inconsistent");
+        assert_eq!(exprs.len(), 0, "expression size inconsistent");
+
+        Arc::new(CubeScanNode {
+            schema: self.schema.clone(),
+            request: self.request.clone(),
+        })
+    }
+}
+
+//  Produces an execution plan where the schema is mismatched from
+//  the logical plan node.
+pub struct CubeScanExtensionPlanner {}
+
+impl ExtensionPlanner for CubeScanExtensionPlanner {
+    /// Create a physical plan for an extension node
+    fn plan_extension(
+        &self,
+        _planner: &dyn PhysicalPlanner,
+        node: &dyn UserDefinedLogicalNode,
+        logical_inputs: &[&LogicalPlan],
+        physical_inputs: &[Arc<dyn ExecutionPlan>],
+        _ctx_state: &ExecutionContextState,
+    ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
+        Ok(
+            if let Some(scan_node) = node.as_any().downcast_ref::<CubeScanNode>() {
+                assert_eq!(logical_inputs.len(), 0, "Inconsistent number of inputs");
+                assert_eq!(physical_inputs.len(), 0, "Inconsistent number of inputs");
+
+                // figure out input name
+                Some(Arc::new(CubeScanExecutionPlan {
+                    schema: Arc::new(Schema::empty()),
+                }))
+            } else {
+                None
+            },
+        )
     }
 }
 

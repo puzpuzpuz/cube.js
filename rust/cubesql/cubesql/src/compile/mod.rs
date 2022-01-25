@@ -32,6 +32,7 @@ use msql_srv::{ColumnFlags, ColumnType, StatusFlags};
 use self::builder::*;
 use self::context::*;
 use self::engine::context::SystemVar;
+use self::engine::df::planner::CubeQueryPlanner;
 use self::engine::df::scan::CubeScanNode;
 use self::engine::provider::CubeContext;
 use self::engine::udf::{
@@ -1868,8 +1869,11 @@ WHERE `TABLE_SCHEMA` = '{}'",
     }
 
     fn create_execution_ctx(&self, props: &QueryPlannerExecutionProps) -> ExecutionContext {
-        let mut ctx =
-            ExecutionContext::with_config(ExecutionConfig::new().with_information_schema(false));
+        let mut ctx = ExecutionContext::with_config(
+            ExecutionConfig::new()
+                .with_query_planner(Arc::new(CubeQueryPlanner::new()))
+                .with_information_schema(false),
+        );
 
         let variable_provider = SystemVar::new();
         ctx.register_variable(VarType::System, Arc::new(variable_provider));
