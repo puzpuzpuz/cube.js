@@ -6,7 +6,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use cubeclient::models::{V1LoadRequestQuery, V1LoadResponse, V1LoadResult};
+use cubeclient::models::{V1LoadRequestQuery, V1LoadResult};
 use datafusion::{
     arrow::{
         datatypes::{Schema, SchemaRef},

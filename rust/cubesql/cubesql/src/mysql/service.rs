@@ -14,7 +14,7 @@ use log::trace;
 
 use msql_srv::*;
 
-use serde_json::json;
+
 use tokio::net::TcpListener;
 use tokio::sync::{watch, RwLock};
 

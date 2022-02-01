@@ -1523,7 +1523,7 @@ impl QueryPlanner {
                 )),
             };
 
-            let mut ctx = self.create_execution_ctx(props);
+            let ctx = self.create_execution_ctx(props);
             Ok(QueryPlan::DataFushionSelect(
                 StatusFlags::empty(),
                 logical_plan,
@@ -1903,7 +1903,7 @@ WHERE `TABLE_SCHEMA` = '{}'",
         stmt: ast::Statement,
         props: &QueryPlannerExecutionProps,
     ) -> CompilationResult<QueryPlan> {
-        let mut ctx = self.create_execution_ctx(props);
+        let ctx = self.create_execution_ctx(props);
 
         let state = ctx.state.lock().unwrap().clone();
         let cube_ctx = CubeContext::new(&state, &self.context.cubes);
