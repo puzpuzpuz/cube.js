@@ -1,22 +1,34 @@
-use std::{any::Any, fmt, sync::Arc};
+use std::{
+    any::Any,
+    fmt,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use async_trait::async_trait;
-use cubeclient::models::V1LoadRequestQuery;
+use cubeclient::models::{V1LoadRequestQuery, V1LoadResponse, V1LoadResult};
 use datafusion::{
-    arrow::datatypes::{Schema, SchemaRef},
-    error::Result,
+    arrow::{
+        datatypes::{Schema, SchemaRef},
+        error::Result as ArrowResult,
+        record_batch::RecordBatch,
+    },
+    error::{DataFusionError, Result},
     execution::context::ExecutionContextState,
     logical_plan::{DFSchemaRef, Expr, LogicalPlan, UserDefinedLogicalNode},
     physical_plan::{
         planner::ExtensionPlanner, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalPlanner,
-        SendableRecordBatchStream, Statistics,
+        RecordBatchStream, SendableRecordBatchStream, Statistics,
     },
 };
+use futures::Stream;
+
+use crate::{mysql::AuthContext, transport::TransportService};
 
 #[derive(Debug)]
 pub struct CubeScanNode {
-    schema: DFSchemaRef,
-    request: V1LoadRequestQuery,
+    pub schema: DFSchemaRef,
+    pub request: V1LoadRequestQuery,
 }
 
 impl CubeScanNode {
@@ -63,7 +75,9 @@ impl UserDefinedLogicalNode for CubeScanNode {
 
 //  Produces an execution plan where the schema is mismatched from
 //  the logical plan node.
-pub struct CubeScanExtensionPlanner {}
+pub struct CubeScanExtensionPlanner {
+    pub transport: Arc<dyn TransportService>,
+}
 
 impl ExtensionPlanner for CubeScanExtensionPlanner {
     /// Create a physical plan for an extension node
@@ -83,6 +97,8 @@ impl ExtensionPlanner for CubeScanExtensionPlanner {
                 // figure out input name
                 Some(Arc::new(CubeScanExecutionPlan {
                     schema: Arc::new(Schema::empty()),
+                    request: scan_node.request.clone(),
+                    transport: self.transport.clone(),
                 }))
             } else {
                 None
@@ -91,9 +107,19 @@ impl ExtensionPlanner for CubeScanExtensionPlanner {
     }
 }
 
-#[derive(Debug)]
 struct CubeScanExecutionPlan {
     schema: SchemaRef,
+    request: V1LoadRequestQuery,
+    transport: Arc<dyn TransportService>,
+}
+
+impl std::fmt::Debug for CubeScanExecutionPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CubeScanExecutionPlan")
+            .field("schema", &self.schema)
+            // .field("transport", &self.transport)
+            .finish()
+    }
 }
 
 #[async_trait]
@@ -119,11 +145,27 @@ impl ExecutionPlan for CubeScanExecutionPlan {
         &self,
         _children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        unimplemented!("CubeScanExecutionPlan::with_new_children");
+        Err(DataFusionError::Internal(format!(
+            "Children cannot be replaced in {:?}",
+            self
+        )))
     }
 
     async fn execute(&self, _partition: usize) -> Result<SendableRecordBatchStream> {
-        unimplemented!("CubeScanExecutionPlan::execute");
+        let result = self.transport.load(self.request.clone()).await;
+
+        let response = result.map_err(|err| DataFusionError::Execution(err.to_string()))?;
+
+        let result = if response.results.len() > 0 {
+            response.results[0].clone()
+        } else {
+            panic!("err")
+        };
+
+        Ok(Box::pin(CubeScanMemoryStream::new(
+            result,
+            self.schema.clone(),
+        )))
     }
 
     fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -136,5 +178,65 @@ impl ExecutionPlan for CubeScanExecutionPlan {
 
     fn statistics(&self) -> Statistics {
         unimplemented!("CubeScanExecutionPlan::statistics");
+    }
+}
+
+struct CubeScanMemoryStream {
+    //
+    result: V1LoadResult,
+    /// Schema representing the data
+    schema: SchemaRef,
+    /// Index into the data
+    index: usize,
+}
+
+impl CubeScanMemoryStream {
+    pub fn new(result: V1LoadResult, schema: SchemaRef) -> Self {
+        Self {
+            result,
+            schema,
+            index: 0,
+        }
+    }
+}
+
+impl Stream for CubeScanMemoryStream {
+    type Item = ArrowResult<RecordBatch>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        Poll::Ready(if self.index < self.result.data.len() {
+            self.index += 1;
+            let batch = &self.result.data[self.index - 1];
+
+            println!("batch {:?}", batch);
+
+            // // apply projection
+            // match &self.projection {
+            //     Some(columns) => Some(RecordBatch::try_new(
+            //         self.schema.clone(),
+            //         columns.iter().map(|i| batch.column(*i).clone()).collect(),
+            //     )),
+            //     None => Some(Ok(batch.clone())),
+            // }
+
+            None
+        } else {
+            None
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // @todo implement?)
+        (0, None)
+    }
+}
+
+impl RecordBatchStream for CubeScanMemoryStream {
+    /// Get the schema
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
     }
 }

@@ -8,13 +8,17 @@ use datafusion::{
     physical_plan::{planner::DefaultPhysicalPlanner, ExecutionPlan, PhysicalPlanner},
 };
 
+use crate::transport::TransportService;
+
 use super::scan::CubeScanExtensionPlanner;
 
-pub struct CubeQueryPlanner {}
+pub struct CubeQueryPlanner {
+    pub transport: Arc<dyn TransportService>,
+}
 
 impl CubeQueryPlanner {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(transport: Arc<dyn TransportService>) -> Self {
+        Self { transport }
     }
 }
 
@@ -29,7 +33,9 @@ impl QueryPlanner for CubeQueryPlanner {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // Teach the default physical planner how to plan TopK nodes.
         let physical_planner = DefaultPhysicalPlanner::with_extension_planners(vec![Arc::new(
-            CubeScanExtensionPlanner {},
+            CubeScanExtensionPlanner {
+                transport: self.transport.clone(),
+            },
         )]);
         // Delegate most work of physical planning to the default physical planner
         physical_planner

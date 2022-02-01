@@ -20,8 +20,7 @@ use cubeclient::models::{
 
 use crate::mysql::dataframe;
 pub use crate::transport::ctx::*;
-use crate::transport::V1CubeMetaExt;
-
+use crate::transport::{V1CubeMetaExt, TransportService};
 use crate::CubeError;
 use crate::{
     compile::builder::QueryBuilder,
@@ -47,6 +46,7 @@ pub mod builder;
 pub mod context;
 pub mod engine;
 pub mod parser;
+pub mod service;
 
 #[derive(Debug, PartialEq)]
 pub enum CompilationError {
@@ -1326,7 +1326,7 @@ fn compile_select(expr: &ast::Select, ctx: &mut QueryContext) -> CompilationResu
     Ok(builder)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryPlannerExecutionProps {
     connection_id: u32,
     user: Option<String>,
@@ -1359,11 +1359,12 @@ impl QueryPlannerExecutionProps {
 
 struct QueryPlanner {
     context: Arc<ctx::MetaContext>,
+    transport: Arc<dyn TransportService>,
 }
 
 impl QueryPlanner {
-    pub fn new(context: Arc<ctx::MetaContext>) -> Self {
-        Self { context }
+    pub fn new(transport: Arc<dyn TransportService>, context: Arc<ctx::MetaContext>) -> Self {
+        Self { transport, context }
     }
 
     /// Common case for both planners: meta & olap
@@ -1522,7 +1523,7 @@ impl QueryPlanner {
                 )),
             };
 
-            let mut ctx = self.create_execution_ctx(&props);
+            let mut ctx = self.create_execution_ctx(props);
             Ok(QueryPlan::DataFushionSelect(
                 StatusFlags::empty(),
                 logical_plan,
@@ -1869,9 +1870,9 @@ WHERE `TABLE_SCHEMA` = '{}'",
     }
 
     fn create_execution_ctx(&self, props: &QueryPlannerExecutionProps) -> ExecutionContext {
-        let mut ctx = ExecutionContext::with_config(
+       let mut ctx = ExecutionContext::with_config(
             ExecutionConfig::new()
-                .with_query_planner(Arc::new(CubeQueryPlanner::new()))
+                .with_query_planner(Arc::new(CubeQueryPlanner::new(self.transport.clone())))
                 .with_information_schema(false),
         );
 
@@ -1879,11 +1880,11 @@ WHERE `TABLE_SCHEMA` = '{}'",
         ctx.register_variable(VarType::System, Arc::new(variable_provider));
 
         ctx.register_udf(create_version_udf());
-        ctx.register_udf(create_db_udf("database".to_string(), props));
-        ctx.register_udf(create_db_udf("schema".to_string(), props));
-        ctx.register_udf(create_connection_id_udf(props));
-        ctx.register_udf(create_user_udf(props));
-        ctx.register_udf(create_current_user_udf(props));
+        ctx.register_udf(create_db_udf("database".to_string(), &props));
+        ctx.register_udf(create_db_udf("schema".to_string(), &props));
+        ctx.register_udf(create_connection_id_udf(&props));
+        ctx.register_udf(create_user_udf(&props));
+        ctx.register_udf(create_current_user_udf(&props));
         ctx.register_udf(create_instr_udf());
         ctx.register_udf(create_ucase_udf());
         ctx.register_udf(create_isnull_udf());
@@ -1902,7 +1903,7 @@ WHERE `TABLE_SCHEMA` = '{}'",
         stmt: ast::Statement,
         props: &QueryPlannerExecutionProps,
     ) -> CompilationResult<QueryPlan> {
-        let mut ctx = self.create_execution_ctx(&props);
+        let mut ctx = self.create_execution_ctx(props);
 
         let state = ctx.state.lock().unwrap().clone();
         let cube_ctx = CubeContext::new(&state, &self.context.cubes);
@@ -1929,9 +1930,10 @@ WHERE `TABLE_SCHEMA` = '{}'",
 pub fn convert_statement_to_cube_query(
     stmt: &ast::Statement,
     tenant_ctx: Arc<ctx::MetaContext>,
-    props: &QueryPlannerExecutionProps,
+    transport: Arc<dyn TransportService>,
+    props: &QueryPlannerExecutionProps
 ) -> CompilationResult<QueryPlan> {
-    let planner = QueryPlanner::new(tenant_ctx);
+    let planner = QueryPlanner::new(transport, tenant_ctx);
     planner.plan(stmt, props)
 }
 
@@ -1971,7 +1973,8 @@ impl QueryPlan {
 pub fn convert_sql_to_cube_query(
     query: &String,
     tenant: Arc<ctx::MetaContext>,
-    props: &QueryPlannerExecutionProps,
+    transport: Arc<dyn TransportService>,
+    props: &QueryPlannerExecutionProps
 ) -> CompilationResult<QueryPlan> {
     // @todo Support without workarounds
     // metabase
@@ -1989,7 +1992,7 @@ pub fn convert_sql_to_cube_query(
     let query = query.replace("UNSIGNED INTEGER", "bigint");
 
     let stmt = parse_sql_to_statement(&query)?;
-    convert_statement_to_cube_query(&stmt, tenant, props)
+    convert_statement_to_cube_query(&stmt, tenant, transport, props)
 }
 
 #[cfg(test)]
