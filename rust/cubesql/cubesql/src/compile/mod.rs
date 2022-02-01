@@ -20,7 +20,7 @@ use cubeclient::models::{
 
 use crate::mysql::dataframe;
 pub use crate::transport::ctx::*;
-use crate::transport::{V1CubeMetaExt, TransportService};
+use crate::transport::{TransportService, V1CubeMetaExt};
 use crate::CubeError;
 use crate::{
     compile::builder::QueryBuilder,
@@ -1870,7 +1870,7 @@ WHERE `TABLE_SCHEMA` = '{}'",
     }
 
     fn create_execution_ctx(&self, props: &QueryPlannerExecutionProps) -> ExecutionContext {
-       let mut ctx = ExecutionContext::with_config(
+        let mut ctx = ExecutionContext::with_config(
             ExecutionConfig::new()
                 .with_query_planner(Arc::new(CubeQueryPlanner::new(self.transport.clone())))
                 .with_information_schema(false),
@@ -1931,7 +1931,7 @@ pub fn convert_statement_to_cube_query(
     stmt: &ast::Statement,
     tenant_ctx: Arc<ctx::MetaContext>,
     transport: Arc<dyn TransportService>,
-    props: &QueryPlannerExecutionProps
+    props: &QueryPlannerExecutionProps,
 ) -> CompilationResult<QueryPlan> {
     let planner = QueryPlanner::new(transport, tenant_ctx);
     planner.plan(stmt, props)
@@ -1974,7 +1974,7 @@ pub fn convert_sql_to_cube_query(
     query: &String,
     tenant: Arc<ctx::MetaContext>,
     transport: Arc<dyn TransportService>,
-    props: &QueryPlannerExecutionProps
+    props: &QueryPlannerExecutionProps,
 ) -> CompilationResult<QueryPlan> {
     // @todo Support without workarounds
     // metabase

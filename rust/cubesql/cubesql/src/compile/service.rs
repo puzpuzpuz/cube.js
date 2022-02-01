@@ -3,10 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::transport::TransportService;
+use crate::CubeError;
 
 use super::{
-    convert_sql_to_cube_query, CompilationResult, QueryPlan, QueryPlannerExecutionProps,
-    MetaContext,
+    convert_sql_to_cube_query, CompilationResult, MetaContext, QueryPlan,
+    QueryPlannerExecutionProps,
 };
 
 #[async_trait]

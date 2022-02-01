@@ -152,7 +152,16 @@ impl ExecutionPlan for CubeScanExecutionPlan {
     }
 
     async fn execute(&self, _partition: usize) -> Result<SendableRecordBatchStream> {
-        let result = self.transport.load(self.request.clone()).await;
+        let result = self
+            .transport
+            .load(
+                self.request.clone(),
+                &AuthContext {
+                    access_token: "".to_string(),
+                    base_path: "".to_string(),
+                },
+            )
+            .await;
 
         let response = result.map_err(|err| DataFusionError::Execution(err.to_string()))?;
 

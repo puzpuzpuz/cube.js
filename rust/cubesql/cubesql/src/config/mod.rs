@@ -184,7 +184,9 @@ impl Config {
             .await;
 
         self.injector
-            .register_typed::<dyn TransportService, _, _, _>(async move |_| Arc::new(HttpTransport))
+            .register_typed::<dyn TransportService, _, _, _>(async move |_| {
+                Arc::new(HttpTransport)
+            });
 
         if self.config_obj.bind_address().is_some() {
             self.injector
