@@ -18,7 +18,7 @@ use cubeclient::models::{
     V1LoadRequestQuery, V1LoadRequestQueryFilterItem, V1LoadRequestQueryTimeDimension,
 };
 
-use crate::mysql::dataframe;
+use crate::mysql::{dataframe, AuthContext};
 pub use crate::transport::ctx::*;
 use crate::transport::{TransportService, V1CubeMetaExt};
 use crate::CubeError;
@@ -1358,13 +1358,14 @@ impl QueryPlannerExecutionProps {
 }
 
 struct QueryPlanner {
-    context: Arc<ctx::MetaContext>,
+    auth_context: Arc<AuthContext>,
+    meta_context: Arc<MetaContext>,
     transport: Arc<dyn TransportService>,
 }
 
 impl QueryPlanner {
-    pub fn new(transport: Arc<dyn TransportService>, context: Arc<ctx::MetaContext>) -> Self {
-        Self { transport, context }
+    pub fn new(auth_context: Arc<AuthContext>, transport: Arc<dyn TransportService>, meta_context: Arc<MetaContext>) -> Self {
+        Self { auth_context, transport, meta_context }
     }
 
     /// Common case for both planners: meta & olap
@@ -1479,7 +1480,7 @@ impl QueryPlanner {
             ));
         };
 
-        if let Some(cube) = self.context.find_cube_with_name(table_name.clone()) {
+        if let Some(cube) = self.meta_context.find_cube_with_name(table_name.clone()) {
             let mut ctx = QueryContext::new(&cube);
             let mut builder = compile_select(select, &mut ctx)?;
 
@@ -1520,6 +1521,8 @@ impl QueryPlanner {
                             .unwrap(),
                     ),
                     query.request,
+                    // @todo pass it
+                    self.auth_context.clone(),
                 )),
             };
 
@@ -1707,7 +1710,7 @@ impl QueryPlanner {
             &obj_name.0[0].value
         };
 
-        self.context.cubes.iter().find(|c| c.name.eq(table_name_filter)).map(|cube| {
+        self.meta_context.cubes.iter().find(|c| c.name.eq(table_name_filter)).map(|cube| {
             let mut fields: Vec<String> = vec![];
 
             for column in &cube.get_columns() {
@@ -1906,7 +1909,7 @@ WHERE `TABLE_SCHEMA` = '{}'",
         let ctx = self.create_execution_ctx(props);
 
         let state = ctx.state.lock().unwrap().clone();
-        let cube_ctx = CubeContext::new(&state, &self.context.cubes);
+        let cube_ctx = CubeContext::new(&state, &self.meta_context.cubes);
         let df_query_planner = SqlToRel::new(&cube_ctx);
 
         let plan = df_query_planner
@@ -1929,11 +1932,12 @@ WHERE `TABLE_SCHEMA` = '{}'",
 
 pub fn convert_statement_to_cube_query(
     stmt: &ast::Statement,
-    tenant_ctx: Arc<ctx::MetaContext>,
+    meta_context: Arc<MetaContext>,
+    auth_context: Arc<AuthContext>,
     transport: Arc<dyn TransportService>,
     props: &QueryPlannerExecutionProps,
 ) -> CompilationResult<QueryPlan> {
-    let planner = QueryPlanner::new(transport, tenant_ctx);
+    let planner = QueryPlanner::new(auth_context, transport, meta_context);
     planner.plan(stmt, props)
 }
 
@@ -1972,7 +1976,8 @@ impl QueryPlan {
 
 pub fn convert_sql_to_cube_query(
     query: &String,
-    tenant: Arc<ctx::MetaContext>,
+    meta_context: Arc<MetaContext>,
+    auth_context: Arc<AuthContext>,
     transport: Arc<dyn TransportService>,
     props: &QueryPlannerExecutionProps,
 ) -> CompilationResult<QueryPlan> {
@@ -1992,7 +1997,7 @@ pub fn convert_sql_to_cube_query(
     let query = query.replace("UNSIGNED INTEGER", "bigint");
 
     let stmt = parse_sql_to_statement(&query)?;
-    convert_statement_to_cube_query(&stmt, tenant, transport, props)
+    convert_statement_to_cube_query(&stmt, meta_context, auth_context, transport, props)
 }
 
 #[cfg(test)]

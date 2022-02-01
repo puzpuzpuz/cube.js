@@ -236,7 +236,7 @@ impl Backend {
                         .meta(self.auth_context()?)
                     .await?;
 
-                    let plan = convert_statement_to_cube_query(&statement, Arc::new(ctx), self.server.transport.clone(), &self.props)?;
+                    let plan = convert_statement_to_cube_query(&statement, Arc::new(ctx), self.auth_context()?, self.server.transport.clone(), &self.props)?;
 
                     return Ok(QueryResponse::ResultSet(StatusFlags::empty(), Arc::new(dataframe::DataFrame::new(
                         vec![
@@ -260,11 +260,11 @@ impl Backend {
         } else if !ignore {
             trace!("query was not detected");
 
-            let ctx = self.server.transport
+            let meta = self.server.transport
                 .meta(self.auth_context()?)
                 .await?;
 
-            let plan = convert_sql_to_cube_query(&query, Arc::new(ctx), self.server.transport.clone(), &self.props)?;
+            let plan = convert_sql_to_cube_query(&query, Arc::new(meta), self.auth_context()?, self.server.transport.clone(), &self.props)?;
             match plan {
                 crate::compile::QueryPlan::MetaOk(status) => {
                     return Ok(QueryResponse::Ok(status));
@@ -295,9 +295,9 @@ impl Backend {
         }
     }
 
-    pub(crate) fn auth_context(&self) -> Result<&AuthContext, CubeError> {
+    pub(crate) fn auth_context(&self) -> Result<Arc<AuthContext>, CubeError> {
         if self.context.is_some() {
-            Ok(self.context.as_ref().unwrap())
+            Ok(Arc::new(self.context.as_ref().unwrap().clone()))
         } else {
             Err(CubeError::internal("must be auth".to_string()))
         }

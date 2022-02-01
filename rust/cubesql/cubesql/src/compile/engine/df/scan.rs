@@ -29,11 +29,12 @@ use crate::{mysql::AuthContext, transport::TransportService};
 pub struct CubeScanNode {
     pub schema: DFSchemaRef,
     pub request: V1LoadRequestQuery,
+    pub auth_context: Arc<AuthContext>,
 }
 
 impl CubeScanNode {
-    pub fn new(schema: DFSchemaRef, request: V1LoadRequestQuery) -> Self {
-        Self { schema, request }
+    pub fn new(schema: DFSchemaRef, request: V1LoadRequestQuery, auth_context: Arc<AuthContext>) -> Self {
+        Self { schema, request, auth_context }
     }
 }
 
@@ -69,6 +70,7 @@ impl UserDefinedLogicalNode for CubeScanNode {
         Arc::new(CubeScanNode {
             schema: self.schema.clone(),
             request: self.request.clone(),
+            auth_context: self.auth_context.clone(),
         })
     }
 }
@@ -97,8 +99,9 @@ impl ExtensionPlanner for CubeScanExtensionPlanner {
                 // figure out input name
                 Some(Arc::new(CubeScanExecutionPlan {
                     schema: Arc::new(Schema::empty()),
-                    request: scan_node.request.clone(),
                     transport: self.transport.clone(),
+                    request: scan_node.request.clone(),
+                    auth_context: scan_node.auth_context.clone(),
                 }))
             } else {
                 None
@@ -110,6 +113,8 @@ impl ExtensionPlanner for CubeScanExtensionPlanner {
 struct CubeScanExecutionPlan {
     schema: SchemaRef,
     request: V1LoadRequestQuery,
+    auth_context: Arc<AuthContext>,
+    // Shared references
     transport: Arc<dyn TransportService>,
 }
 
@@ -156,10 +161,7 @@ impl ExecutionPlan for CubeScanExecutionPlan {
             .transport
             .load(
                 self.request.clone(),
-                &AuthContext {
-                    access_token: "".to_string(),
-                    base_path: "".to_string(),
-                },
+                self.auth_context.clone(),
             )
             .await;
 

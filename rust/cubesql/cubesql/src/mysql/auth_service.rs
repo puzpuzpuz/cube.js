@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::CubeError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AuthContext {
     pub access_token: String,
     pub base_path: String,
