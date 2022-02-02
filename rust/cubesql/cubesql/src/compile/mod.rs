@@ -1564,6 +1564,10 @@ impl QueryPlanner {
                 db_name,
             } => self.show_tables_to_plan(*extended, *full, &filter, &db_name, props),
             ast::Statement::ShowCollation { filter } => self.show_collation_to_plan(&filter, props),
+            ast::Statement::ExplainTable { table_name, .. } => {
+                self.explain_table_to_plan(&table_name, props)
+            }
+            ast::Statement::Explain { statement, .. } => self.explain_to_plan(&statement, props),
             _ => Err(CompilationError::Unsupported(format!(
                 "Unsupported query type: {}",
                 stmt.to_string()
@@ -1877,6 +1881,38 @@ WHERE `TABLE_SCHEMA` = '{}'",
         ))?;
 
         self.create_df_logical_plan(stmt, props)
+    }
+
+    fn explain_table_to_plan(
+        &self,
+        table_name: &ast::ObjectName,
+        props: &QueryPlannerExecutionProps,
+    ) -> Result<QueryPlan, CompilationError> {
+        // EXPLAIN <table> matches the SHOW COLUMNS output exactly, reuse the plan
+        self.show_columns_to_plan(false, false, &None, table_name, props)
+    }
+
+    fn explain_to_plan(
+        &self,
+        statement: &Box<ast::Statement>,
+        props: &QueryPlannerExecutionProps,
+    ) -> Result<QueryPlan, CompilationError> {
+        let plan = convert_statement_to_cube_query(&statement, self.context.clone(), props)?;
+
+        return Ok(QueryPlan::MetaTabular(
+            StatusFlags::empty(),
+            Arc::new(dataframe::DataFrame::new(
+                vec![dataframe::Column::new(
+                    "Execution Plan".to_string(),
+                    ColumnType::MYSQL_TYPE_STRING,
+                    ColumnFlags::empty(),
+                )],
+                vec![dataframe::Row::new(vec![dataframe::TableValue::String(
+                    plan.print(true)
+                        .map_err(|error| CompilationError::Internal(error.message))?,
+                )])],
+            )),
+        ));
     }
 
     fn create_df_logical_plan(
@@ -4383,6 +4419,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_explain_table() -> Result<(), CubeError> {
+        assert_eq!(
+            execute_query("explain KibanaSampleDataEcommerce;".to_string()).await?,
+            "+--------------------+--------------+------+-----+---------+-------+\n\
+            | Field              | Type         | Null | Key | Default | Extra |\n\
+            +--------------------+--------------+------+-----+---------+-------+\n\
+            | count              | int          | NO   |     | NULL    |       |\n\
+            | maxPrice           | int          | NO   |     | NULL    |       |\n\
+            | minPrice           | int          | NO   |     | NULL    |       |\n\
+            | avgPrice           | int          | NO   |     | NULL    |       |\n\
+            | order_date         | datetime     | YES  |     | NULL    |       |\n\
+            | customer_gender    | varchar(255) | YES  |     | NULL    |       |\n\
+            | taxful_total_price | varchar(255) | YES  |     | NULL    |       |\n\
+            | is_male            | boolean      | NO   |     | NULL    |       |\n\
+            | is_female          | boolean      | NO   |     | NULL    |       |\n\
+            +--------------------+--------------+------+-----+---------+-------+"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_show_collation() -> Result<(), CubeError> {
         // Simplest syntax
         assert_eq!(
@@ -4506,6 +4564,53 @@ mod tests {
             +-------------+---------+----+---------+----------+---------+---------------+\n\
             | utf8mb4_bin | utf8mb4 | 46 |         | Yes      | 1       | PAD SPACE     |\n\
             +-------------+---------+----+---------+----------+---------+---------------+"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_explain() -> Result<(), CubeError> {
+        // SELECT with no tables (inline eval)
+        assert_eq!(
+            execute_query("explain select 1+1;".to_string()).await?,
+            "+---------------------------------+\n\
+            | Execution Plan                  |\n\
+            +---------------------------------+\n\
+            | Projection: Int64(1) + Int64(1) |\n\
+            |   EmptyRelation                 |\n\
+            +---------------------------------+"
+        );
+
+        // SELECT with table and specific columns
+        assert_eq!(
+            execute_query("explain select count, avgPrice from KibanaSampleDataEcommerce;".to_string()).await?,
+            "+------------------------------------------------------------+\n\
+            | Execution Plan                                             |\n\
+            +------------------------------------------------------------+\n\
+            | {                                                          |\n\
+            |   \"request\": {                                             |\n\
+            |     \"measures\": [                                          |\n\
+            |       \"KibanaSampleDataEcommerce.count\",                   |\n\
+            |       \"KibanaSampleDataEcommerce.avgPrice\"                 |\n\
+            |     ],                                                     |\n\
+            |     \"dimensions\": [],                                      |\n\
+            |     \"segments\": []                                         |\n\
+            |   },                                                       |\n\
+            |   \"meta\": [                                                |\n\
+            |     {                                                      |\n\
+            |       \"column_from\": \"KibanaSampleDataEcommerce.count\",    |\n\
+            |       \"column_to\": \"count\",                                |\n\
+            |       \"column_type\": \"MYSQL_TYPE_LONGLONG\"                 |\n\
+            |     },                                                     |\n\
+            |     {                                                      |\n\
+            |       \"column_from\": \"KibanaSampleDataEcommerce.avgPrice\", |\n\
+            |       \"column_to\": \"avgPrice\",                             |\n\
+            |       \"column_type\": \"MYSQL_TYPE_DOUBLE\"                   |\n\
+            |     }                                                      |\n\
+            |   ]                                                        |\n\
+            | }                                                          |\n\
+            +------------------------------------------------------------+"
         );
 
         Ok(())
