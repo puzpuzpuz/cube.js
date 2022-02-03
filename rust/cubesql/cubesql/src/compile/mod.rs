@@ -4584,7 +4584,10 @@ mod tests {
 
         // SELECT with table and specific columns
         assert_eq!(
-            execute_query("explain select count, avgPrice from KibanaSampleDataEcommerce;".to_string()).await?,
+            execute_query(
+                "explain select count, avgPrice from KibanaSampleDataEcommerce;".to_string()
+            )
+            .await?,
             "+------------------------------------------------------------+\n\
             | Execution Plan                                             |\n\
             +------------------------------------------------------------+\n\
